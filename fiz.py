@@ -48,7 +48,7 @@ DELAY_BETWEEN_GIFTS = 2.5  # Задержка между покупками по
 # ========================================================
 
 # ==================== АВТОРИЗАЦИЯ ГЛАВНОГО АККАУНТА ====================
-MASTER_PHONE = "+88816666773"
+MASTER_PHONE = "+88809089761"
 MASTER_SESSION_NAME = "larpgram_session"
 # ========================================================
 
@@ -608,7 +608,6 @@ async def farm_lvl_worker(phone: str):
 async def handle_command(event, phone: str):
     """Обрабатывает команды для конкретного аккаунта"""
     text = event.raw_text
-    sender = await event.get_sender()
     
     # Проверяем, что команда от владельца аккаунта
     me = await event.client.get_me()
@@ -841,8 +840,7 @@ async def handle_command(event, phone: str):
         
         await load_available_gifts(client, phone, force=True)
         if new_id in account_data.get('available_gifts', {}):
-            price = account_data['available_gifts'][new_id].stars
-            await event.respond(f"✅ ID подарка изменен на: {new_id} ({price}⭐)")
+            price = account_data['available_gifts'][new_id].stars            await event.respond(f"✅ ID подарка изменен на: {new_id} ({price}⭐)")
         else:
             await event.respond(f"⚠️ Подарок {new_id} не найден в списке доступных!")
         
@@ -956,15 +954,18 @@ async def start_master_account():
         
         await load_available_gifts(master_client, MASTER_PHONE, force=True)
         
+        # Обработчик для мастер-аккаунта
         @master_client.on(events.NewMessage)
         async def master_handler(event):
             await handle_command(event, MASTER_PHONE)
         
+        # Обработчики для всех добавленных аккаунтов
         def add_account_handler(phone, client):
             @client.on(events.NewMessage)
             async def account_handler(event):
                 await handle_command(event, phone)
         
+        # Добавляем обработчики для уже существующих аккаунтов
         for phone, data in account_manager.accounts.items():
             if phone != MASTER_PHONE and not data.get('pending_auth'):
                 add_account_handler(phone, data['client'])
