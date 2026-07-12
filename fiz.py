@@ -48,7 +48,7 @@ DELAY_BETWEEN_GIFTS = 2.5  # Задержка между покупками по
 # ========================================================
 
 # ==================== АВТОРИЗАЦИЯ ГЛАВНОГО АККАУНТА ====================
-MASTER_PHONE = "+88809089761"
+MASTER_PHONE = "+88816666773"
 MASTER_SESSION_NAME = "larpgram_session"
 # ========================================================
 
@@ -125,7 +125,8 @@ class AccountManager:
             'current_farm_gift_id': FARM_GIFT_ID,
             'user_deposits': {},
             'auto_buy_chat_id': None,
-            'consecutive_errors': 0
+            'consecutive_errors': 0,
+            'pending_auth': False
         }
         
     def get_client(self, phone: str):
@@ -620,8 +621,13 @@ async def handle_command(event, phone: str):
     
     client = event.client
     
-    # ========== КОМАНДА .add_account ==========
+    # ========== КОМАНДА .add_account (ТОЛЬКО ДЛЯ МАСТЕРА) ==========
     if text.lower().startswith('.add_account'):
+        # Проверяем, что это мастер-аккаунт
+        if not account_data.get('is_master'):
+            await event.respond("❌ Команда .add_account доступна только на мастер-аккаунте!")
+            return
+        
         parts = text.split()
         if len(parts) != 2:
             await event.respond("❌ Использование: .add_account +номер")
@@ -681,8 +687,13 @@ async def handle_command(event, phone: str):
         
         return
     
-    # ========== КОМАНДА .add_code ==========
+    # ========== КОМАНДА .add_code (ТОЛЬКО ДЛЯ МАСТЕРА) ==========
     if text.lower().startswith('.add_code'):
+        # Проверяем, что это мастер-аккаунт
+        if not account_data.get('is_master'):
+            await event.respond("❌ Команда .add_code доступна только на мастер-аккаунте!")
+            return
+        
         parts = text.split()
         if len(parts) != 2:
             await event.respond("❌ Использование: .add_code <код>")
@@ -728,7 +739,7 @@ async def handle_command(event, phone: str):
         
         return
     
-    # ========== КОМАНДА .accounts ==========
+    # ========== КОМАНДА .accounts (ДЛЯ ВСЕХ АККАУНТОВ) ==========
     if text.lower().startswith('.accounts'):
         if len(account_manager.accounts) == 0:
             await event.respond("❌ Нет добавленных аккаунтов")
@@ -750,7 +761,7 @@ async def handle_command(event, phone: str):
         await event.respond("\n".join(lines))
         return
     
-    # ========== КОМАНДА .farm_random (СНАЧАЛА СПЕЦИФИЧНАЯ) ==========
+    # ========== КОМАНДА .farm_random (ДЛЯ ВСЕХ АККАУНТОВ) ==========
     if text.lower().startswith('.farm_random'):
         parts = text.split()
         
@@ -813,7 +824,7 @@ async def handle_command(event, phone: str):
         
         return
     
-    # ========== КОМАНДА .farm_id ==========
+    # ========== КОМАНДА .farm_id (ДЛЯ ВСЕХ АККАУНТОВ) ==========
     if text.lower().startswith('.farm_id'):
         parts = text.split()
         if len(parts) != 2:
@@ -837,7 +848,7 @@ async def handle_command(event, phone: str):
         
         return
     
-    # ========== КОМАНДА .farm_status ==========
+    # ========== КОМАНДА .farm_status (ДЛЯ ВСЕХ АККАУНТОВ) ==========
     if text.lower().startswith('.farm_status'):
         is_farming = account_data.get('is_farming', False)
         is_random = account_data.get('is_random_farm', False)
@@ -858,7 +869,7 @@ async def handle_command(event, phone: str):
         )
         return
     
-    # ========== КОМАНДА .farm (ОСНОВНАЯ - ПОСЛЕДНЯЯ) ==========
+    # ========== КОМАНДА .farm (ДЛЯ ВСЕХ АККАУНТОВ - ОСНОВНАЯ) ==========
     if text.lower().startswith('.farm'):
         parts = text.split()
         
