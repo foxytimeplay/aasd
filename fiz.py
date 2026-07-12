@@ -232,14 +232,49 @@ async def get_gift_price(client, phone: str, gift_id):
     return account_data.get('gift_prices', {}).get(gift_id, 0)
 
 async def get_my_stars_balance(client):
+    """Получает баланс звезд пользователя"""
     try:
-        result = await client(functions.users.GetFullUserRequest(
-            id=await client.get_input_entity("me")
-        ))
+        # Получаем свой аккаунт
+        me = await client.get_me()
+        if not me:
+            return None
+            
+        # Пытаемся получить баланс через GetFullUser
+        try:
+            result = await client(functions.users.GetFullUserRequest(
+                id=me
+            ))
+            if hasattr(result, 'full_user') and hasattr(result.full_user, 'stars'):
+                return result.full_user.stars
+        except Exception as e:
+            log.debug(f"GetFullUser не сработал: {e}")
         
-        if hasattr(result, 'full_user') and hasattr(result.full_user, 'stars'):
-            return result.full_user.stars
-        
+        # Альтернативный способ - через GetStarGifts
+        try:
+            res = await client(functions.payments.GetStarGiftsRequest(hash=0))
+            # В ответе может быть баланс
+            if hasattr(res, 'stars'):
+                return res.stars
+        except:
+            pass
+            
+        # Еще один способ - через GetPaymentForm
+        try:
+            # Находим дешевый подарок
+            res = await client(functions.payments.GetStarGiftsRequest(hash=0))
+            if res.gifts:
+                cheap_gift = min(res.gifts, key=lambda g: g.stars)
+                invoice = types.InputInvoiceStarGift(
+                    peer=await client.get_input_entity("me"),
+                    gift_id=cheap_gift.id,
+                    hide_name=False
+                )
+                form = await client(functions.payments.GetPaymentFormRequest(invoice=invoice))
+                if hasattr(form, 'stars') and form.stars:
+                    return form.stars
+        except:
+            pass
+            
         return None
     except Exception as e:
         log.error(f"Ошибка получения баланса: {e}")
@@ -430,7 +465,6 @@ async def farm_lvl_worker(phone: str):
     log.info(f"[{phone}] 🌾 Воркер farm_lvl запущен")
     
     try:
-        # Получаем сущности
         me = await client.get_input_entity("me")
         log.info(f"[{phone}] ✅ Получен me")
         
@@ -440,7 +474,6 @@ async def farm_lvl_worker(phone: str):
     except Exception as e:
         log.error(f"[{phone}] ❌ Ошибка получения сущностей: {e}")
         account_data['is_farming'] = False
-        # Отправляем сообщение пользователю
         try:
             await client.send_message("me", f"❌ Ошибка фарма: не удалось получить сущности\n{e}")
         except:
@@ -452,8 +485,6 @@ async def farm_lvl_worker(phone: str):
 
     while account_data.get('is_farming', False):
         try:
-            # Загружаем подарки
-            log.info(f"[{phone}] 🔄 Загрузка списка подарков...")
             await load_available_gifts(client, phone, force=True)
             
             available_gifts = account_data.get('available_gifts', {})
@@ -462,7 +493,6 @@ async def farm_lvl_worker(phone: str):
                 await asyncio.sleep(10)
                 continue
             
-            # Определяем режим
             is_random = account_data.get('is_random_farm', False)
             random_ids = account_data.get('random_gift_ids', [])
             
@@ -508,17 +538,15 @@ async def farm_lvl_worker(phone: str):
             # Проверяем баланс
             first_gift = selected_gifts[0]
             balance = await get_my_stars_balance(client)
-            log.info(f"[{phone}] 💰 Баланс: {balance}⭐")
             
             if balance is None:
-                log.warning(f"[{phone}] Не удалось получить баланс")
-                await asyncio.sleep(10)
-                continue
-                
-            if balance < first_gift.stars:
-                log.warning(f"[{phone}] ❌ Недостаточно звезд! Нужно: {first_gift.stars}⭐, есть: {balance}⭐")
-                await asyncio.sleep(60)
-                continue
+                log.warning(f"[{phone}] Не удалось получить баланс, пропускаем проверку")
+            else:
+                log.info(f"[{phone}] 💰 Баланс: {balance}⭐")
+                if balance < first_gift.stars:
+                    log.warning(f"[{phone}] ❌ Недостаточно звезд! Нужно: {first_gift.stars}⭐, есть: {balance}⭐")
+                    await asyncio.sleep(60)
+                    continue
             
             black_found = 0
             non_black_sent = 0
@@ -540,7 +568,6 @@ async def farm_lvl_worker(phone: str):
                 log.info(f"[{phone}] ✅ Куплен {target_id}, msg_id: {msg_id}")
                 await asyncio.sleep(1.5)
                 
-                # Улучшаем подарок
                 try:
                     await asyncio.wait_for(
                         client(functions.payments.UpgradeStarGiftRequest(
@@ -556,7 +583,6 @@ async def farm_lvl_worker(phone: str):
                     
                 await asyncio.sleep(2)
                 
-                # Проверяем фон
                 bg_info = await check_gift_background(client, msg_id)
                 
                 if bg_info and bg_info.get('has_backdrop', False):
@@ -696,7 +722,6 @@ async def handle_command(event, phone: str):
         
         lines = ["🎁 **СПИСОК ПОДАРКОВ**", "━━━━━━━━━━━━━━━━━━━", ""]
         
-        # Сортируем по цене
         sorted_gifts = sorted(available.items(), key=lambda x: x[1].stars)
         
         for i, (gid, gift) in enumerate(sorted_gifts[:50], 1):
@@ -814,7 +839,7 @@ async def handle_command(event, phone: str):
             account_data['pending_auth'] = False
             
             await event.respond(
-                f"✅ Аккаунт {phone} добавлен!\n👤 @{me.username}\n📝 Команды принимаются с этого аккаунта"
+                f"✅ Аккаунт {phone} добавлен!\n👤 @{me.username if me.username else me.id}\n📝 Команды принимаются с этого аккаунта"
             )
             
             account_manager.pending_phone = None
@@ -851,7 +876,7 @@ async def handle_command(event, phone: str):
                 auth = "✅" if not data.get('pending_auth') else "⏳"
                 handler = "📡" if data.get('handler_added') else "❌"
                 black = data.get('black_found', 0)
-                username = f"@{user.username}" if user.username else f"ID:{user.id}"
+                username = f"@{user.username}" if user and user.username else f"ID:{user.id if user else '?'}"
                 lines.append(f"{i}. {ph} {auth} {status} Фарм:{farming} {handler} ⬛{black} {username}")
             except Exception as e:
                 lines.append(f"{i}. {ph} ❌ Ошибка: {str(e)[:30]}")
@@ -1071,7 +1096,8 @@ async def restore_sessions():
             
             await load_available_gifts(client, phone, force=True)
             
-            log.info(f"✅ Восстановлен {phone} @{me.username}")
+            username = f"@{me.username}" if me and me.username else f"ID:{me.id if me else '?'}"
+            log.info(f"✅ Восстановлен {phone} {username}")
             
         except Exception as e:
             log.error(f"❌ Ошибка восстановления {phone}: {e}")
@@ -1093,7 +1119,8 @@ async def start_master_account():
         await master_client.start(phone=MASTER_PHONE)
         me = await master_client.get_me()
         
-        log.info(f"✅ Мастер-аккаунт запущен как @{me.username}")
+        username = f"@{me.username}" if me and me.username else f"ID:{me.id if me else '?'}"
+        log.info(f"✅ Мастер-аккаунт запущен как {username}")
         
         account_manager.add_account(MASTER_PHONE, master_client, is_master=True)
         account_manager.master_phone = MASTER_PHONE
