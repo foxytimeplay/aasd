@@ -41,10 +41,10 @@ REQ_TIMEOUT = 15
 BLACK_BG_COLORS = {0, 3553080, 921359}
 
 # ==================== НАСТРОЙКИ ФАРМА ====================
-MAX_GIFT_PRICE_FARM = 3000  # Максимальная цена для фарма
-FARM_GIFT_ID = 5933629604416717361  # ID подарка для фарма (по умолчанию)
-GIFTS_PER_FARM_CYCLE = 5  # Количество подарков за один цикл фарма
-DELAY_BETWEEN_GIFTS = 2.5  # Задержка между покупками подарков
+MAX_GIFT_PRICE_FARM = 3000
+FARM_GIFT_ID = 5933629604416717361
+GIFTS_PER_FARM_CYCLE = 5
+DELAY_BETWEEN_GIFTS = 2.5
 # ========================================================
 
 # ==================== АВТОРИЗАЦИЯ ГЛАВНОГО АККАУНТА ====================
@@ -90,7 +90,6 @@ setup_rsa_key()
 
 # ==================== ФУНКЦИЯ ПРОВЕРКИ ЧЕРНОГО ФОНА ====================
 def is_black_backdrop(gift):
-    """Проверяет, является ли фон подарка черным"""
     if not hasattr(gift, 'attributes'):
         return False
     for attr in gift.attributes:
@@ -104,10 +103,11 @@ def is_black_backdrop(gift):
 # ==================== КЛАСС ДЛЯ УПРАВЛЕНИЯ АККАУНТАМИ ====================
 class AccountManager:
     def __init__(self):
-        self.accounts: Dict[str, Dict] = {}  # phone -> {client, is_master, is_farming, ...}
+        self.accounts: Dict[str, Dict] = {}
         self.master_phone = MASTER_PHONE
-        self.pending_codes = {}  # phone -> code
-        self.pending_phone = None  # телефон, который ожидает код
+        self.pending_codes = {}
+        self.pending_phone = None
+        self.receiver_entity = None  # Кешируем получателя
         
     def add_account(self, phone: str, client: TelegramClient, is_master: bool = False):
         self.accounts[phone] = {
@@ -115,8 +115,8 @@ class AccountManager:
             'is_master': is_master,
             'is_farming': False,
             'is_auto_buying': False,
-            'is_random_farm': False,  # Режим рандомного фарма
-            'random_gift_ids': [],  # Список ID для рандомного фарма
+            'is_random_farm': False,
+            'random_gift_ids': [],
             'known_gifts': set(),
             'gift_prices': {},
             'available_gifts': {},
@@ -158,7 +158,6 @@ account_manager = AccountManager()
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 async def load_available_gifts(client, phone: str, force=False):
-    """Загружает список доступных подарков для конкретного аккаунта"""
     account_data = account_manager.accounts.get(phone)
     if not account_data:
         return False
@@ -190,7 +189,6 @@ async def load_available_gifts(client, phone: str, force=False):
         return False
 
 async def get_gift_price(client, phone: str, gift_id):
-    """Получает цену подарка"""
     account_data = account_manager.accounts.get(phone)
     if not account_data:
         return 0
@@ -202,7 +200,6 @@ async def get_gift_price(client, phone: str, gift_id):
     return account_data.get('gift_prices', {}).get(gift_id, 0)
 
 async def get_my_stars_balance(client):
-    """Получает баланс звезд пользователя"""
     try:
         result = await client(functions.users.GetFullUserRequest(
             id=await client.get_input_entity("me")
@@ -217,7 +214,6 @@ async def get_my_stars_balance(client):
         return None
 
 async def check_gift_background(client, gift_msg_id):
-    """Проверяет фон подарка по msg_id используя is_black_backdrop"""
     try:
         saved = await client(functions.payments.GetSavedStarGiftsRequest(
             peer=await client.get_input_entity("me"),
@@ -227,10 +223,8 @@ async def check_gift_background(client, gift_msg_id):
         
         for sg in saved.gifts:
             if hasattr(sg, 'msg_id') and sg.msg_id == gift_msg_id:
-                # Используем новую функцию проверки
                 is_black = is_black_backdrop(sg.gift)
                 
-                # Проверяем наличие фона
                 has_backdrop = False
                 center = None
                 edge = None
@@ -256,7 +250,6 @@ async def check_gift_background(client, gift_msg_id):
         return None
 
 async def buy_single_gift(client, phone: str, gift_id, peer=None, max_retries=3):
-    """Универсальная функция покупки подарка"""
     account_data = account_manager.accounts.get(phone)
     if not account_data:
         return False, None
@@ -407,9 +400,41 @@ async def farm_lvl_worker(phone: str):
     
     try:
         me = await client.get_input_entity("me")
-        receiver = await client.get_input_entity(RECEIVER_USERNAME)
+        log.info(f"[{phone}] ✅ Получен me")
+        
+        # Пытаемся получить получателя
+        try:
+            receiver = await client.get_input_entity(RECEIVER_USERNAME)
+            log.info(f"[{phone}] ✅ Получен receiver: {RECEIVER_USERNAME}")
+        except Exception as e:
+            log.error(f"[{phone}] ❌ Не удалось найти {RECEIVER_USERNAME}: {e}")
+            log.info(f"[{phone}] 🔄 Пытаемся найти через search...")
+            
+            # Пробуем найти через поиск
+            try:
+                result = await client(functions.contacts.SearchRequest(
+                    q=RECEIVER_USERNAME.replace('@', ''),
+                    limit=1
+                ))
+                if result.users:
+                    receiver = result.users[0]
+                    receiver = await client.get_input_entity(receiver.id)
+                    log.info(f"[{phone}] ✅ Найден {RECEIVER_USERNAME} через поиск")
+                else:
+                    log.error(f"[{phone}] ❌ Не удалось найти {RECEIVER_USERNAME}")
+                    account_data['is_farming'] = False
+                    await client.send_message("me", f"❌ Не удалось найти получателя {RECEIVER_USERNAME}")
+                    return
+            except Exception as e2:
+                log.error(f"[{phone}] ❌ Ошибка поиска: {e2}")
+                account_data['is_farming'] = False
+                await client.send_message("me", f"❌ Не удалось найти получателя {RECEIVER_USERNAME}")
+                return
+        
+        account_manager.receiver_entity = receiver
+        
     except Exception as e:
-        log.error(f"[{phone}] Ошибка получения сущностей: {e}")
+        log.error(f"[{phone}] ❌ Ошибка получения сущностей: {e}")
         account_data['is_farming'] = False
         return
 
@@ -425,17 +450,13 @@ async def farm_lvl_worker(phone: str):
                 await asyncio.sleep(5)
                 continue
             
-            # Проверяем режим рандомного фарма
             is_random = account_data.get('is_random_farm', False)
             random_ids = account_data.get('random_gift_ids', [])
             
             selected_gifts = []
             
             if is_random and random_ids:
-                # Рандомный режим - выбираем из списка
                 log.info(f"[{phone}] 🎲 Рандомный режим фарма. ID: {random_ids}")
-                
-                # Фильтруем доступные ID
                 available_random_ids = [gid for gid in random_ids if gid in available_gifts]
                 
                 if not available_random_ids:
@@ -443,14 +464,12 @@ async def farm_lvl_worker(phone: str):
                     await asyncio.sleep(10)
                     continue
                 
-                # Выбираем случайные ID для покупки
                 for _ in range(GIFTS_PER_FARM_CYCLE):
                     if not available_random_ids:
                         break
                     random_gid = random.choice(available_random_ids)
                     selected_gifts.append(available_gifts[random_gid])
             else:
-                # Обычный режим - один конкретный подарок
                 current_farm_gift_id = account_data.get('current_farm_gift_id', FARM_GIFT_ID)
                 
                 if current_farm_gift_id not in available_gifts:
@@ -465,7 +484,6 @@ async def farm_lvl_worker(phone: str):
                     await asyncio.sleep(10)
                     continue
                 
-                # Создаем список из одинаковых подарков
                 selected_gifts = [target_gift] * GIFTS_PER_FARM_CYCLE
             
             if not selected_gifts:
@@ -475,7 +493,6 @@ async def farm_lvl_worker(phone: str):
             
             log.info(f"[{phone}] 🎯 Выбрано {len(selected_gifts)} подарков для фарма")
             
-            # Проверяем баланс
             first_gift = selected_gifts[0]
             balance = await get_my_stars_balance(client)
             if balance is not None and balance < first_gift.stars:
@@ -503,7 +520,6 @@ async def farm_lvl_worker(phone: str):
                 
                 await asyncio.sleep(1.5)
                 
-                # Улучшаем подарок
                 try:
                     await asyncio.wait_for(
                         client(functions.payments.UpgradeStarGiftRequest(
@@ -519,7 +535,6 @@ async def farm_lvl_worker(phone: str):
                     
                 await asyncio.sleep(2)
                 
-                # Проверяем фон
                 bg_info = await check_gift_background(client, msg_id)
                 
                 if bg_info and bg_info.get('has_backdrop', False):
@@ -541,32 +556,70 @@ async def farm_lvl_worker(phone: str):
                         )
                     else:
                         non_black_sent += 1
-                        log.info(f"[{phone}] 🔄 НЕ черный фон (center: {center}, edge: {edge}) - отправляем")
+                        log.info(f"[{phone}] 🔄 НЕ черный фон (center: {center}, edge: {edge}) - отправляем на {RECEIVER_USERNAME}")
                         try:
+                            # Используем сохраненного получателя
+                            receiver_to_use = account_manager.receiver_entity
+                            if not receiver_to_use:
+                                receiver_to_use = await client.get_input_entity(RECEIVER_USERNAME)
+                                account_manager.receiver_entity = receiver_to_use
+                            
                             await asyncio.wait_for(
                                 client(functions.payments.TransferStarGiftRequest(
                                     stargift=types.InputSavedStarGiftUser(msg_id=msg_id),
-                                    to_id=receiver
+                                    to_id=receiver_to_use
                                 )),
                                 timeout=REQ_TIMEOUT
                             )
                             log.info(f"[{phone}] 🚀 Отправлен на {RECEIVER_USERNAME} (не черный)")
+                            await client.send_message(
+                                "me",
+                                f"🔄 **ОТПРАВЛЕН на {RECEIVER_USERNAME}**\n"
+                                f"🎁 Подарок: {target_id}\n"
+                                f"🎨 Center: {center}, Edge: {edge}\n"
+                                f"📱 Аккаунт: {phone}"
+                            )
                         except Exception as e:
                             log.error(f"[{phone}] Ошибка отправки: {e}")
+                            await client.send_message(
+                                "me",
+                                f"❌ **Ошибка отправки на {RECEIVER_USERNAME}**\n"
+                                f"🎁 Подарок: {target_id}\n"
+                                f"❌ Ошибка: {e}\n"
+                                f"📱 Аккаунт: {phone}"
+                            )
                 else:
                     non_black_sent += 1
-                    log.info(f"[{phone}] 🔄 Нет фона (no backdrop) - отправляем")
+                    log.info(f"[{phone}] 🔄 Нет фона (no backdrop) - отправляем на {RECEIVER_USERNAME}")
                     try:
+                        receiver_to_use = account_manager.receiver_entity
+                        if not receiver_to_use:
+                            receiver_to_use = await client.get_input_entity(RECEIVER_USERNAME)
+                            account_manager.receiver_entity = receiver_to_use
+                        
                         await asyncio.wait_for(
                             client(functions.payments.TransferStarGiftRequest(
                                 stargift=types.InputSavedStarGiftUser(msg_id=msg_id),
-                                to_id=receiver
+                                to_id=receiver_to_use
                             )),
                             timeout=REQ_TIMEOUT
                         )
                         log.info(f"[{phone}] 🚀 Отправлен на {RECEIVER_USERNAME} (нет фона)")
+                        await client.send_message(
+                            "me",
+                            f"❌ **ОТПРАВЛЕН на {RECEIVER_USERNAME} (нет фона)**\n"
+                            f"🎁 Подарок: {target_id}\n"
+                            f"📱 Аккаунт: {phone}"
+                        )
                     except Exception as e:
                         log.error(f"[{phone}] Ошибка отправки: {e}")
+                        await client.send_message(
+                            "me",
+                            f"❌ **Ошибка отправки на {RECEIVER_USERNAME}**\n"
+                            f"🎁 Подарок: {target_id}\n"
+                            f"❌ Ошибка: {e}\n"
+                            f"📱 Аккаунт: {phone}"
+                        )
 
                 await asyncio.sleep(DELAY_BETWEEN_GIFTS)
             
@@ -598,10 +651,8 @@ async def farm_lvl_worker(phone: str):
 
 # ==================== ОБРАБОТЧИК КОМАНД ====================
 async def handle_command(event, phone: str):
-    """Обрабатывает команды для конкретного аккаунта"""
     text = event.raw_text
     
-    # Проверяем, что команда от владельца аккаунта
     me = await event.client.get_me()
     if event.sender_id != me.id:
         return
@@ -656,7 +707,6 @@ async def handle_command(event, phone: str):
         
         lines = ["🎁 **СПИСОК ПОДАРКОВ**", "━━━━━━━━━━━━━━━━━━━", ""]
         
-        # Сортируем по цене
         sorted_gifts = sorted(available.items(), key=lambda x: x[1].stars)
         
         for i, (gid, gift) in enumerate(sorted_gifts[:50], 1):
@@ -920,7 +970,6 @@ async def handle_command(event, phone: str):
     if text.lower().startswith('.farm'):
         parts = text.split()
         
-        # Если нет аргументов - показываем статус
         if len(parts) == 1:
             is_farming = account_data.get('is_farming', False)
             is_random = account_data.get('is_random_farm', False)
@@ -983,7 +1032,6 @@ async def handle_command(event, phone: str):
 
 # ==================== ЗАПУСК МАСТЕР-АККАУНТА ====================
 async def start_master_account():
-    """Запускает мастер-аккаунт и создает обработчики"""
     log.info("🚀 Запуск мастер-аккаунта...")
     
     master_client = TelegramClient(
