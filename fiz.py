@@ -824,28 +824,28 @@ async def handle_command(event, phone: str):
         return
     
     # ========== КОМАНДА .farm_id (ДЛЯ ВСЕХ АККАУНТОВ) ==========
-if text.lower().startswith('.farm_id'):
-    parts = text.split()
-    if len(parts) != 2:
-        await event.respond("❌ Использование: .farm_id <id>")
+    if text.lower().startswith('.farm_id'):
+        parts = text.split()
+        if len(parts) != 2:
+            await event.respond("❌ Использование: .farm_id <id>")
+            return
+        
+        try:
+            new_id = int(parts[1])
+        except ValueError:
+            await event.respond(f"❌ Неверный ID: {parts[1]}")
+            return
+        
+        account_data['current_farm_gift_id'] = new_id
+        
+        await load_available_gifts(client, phone, force=True)
+        if new_id in account_data.get('available_gifts', {}):
+            price = account_data['available_gifts'][new_id].stars
+            await event.respond(f"✅ ID подарка изменен на: {new_id} ({price}⭐)")
+        else:
+            await event.respond(f"⚠️ Подарок {new_id} не найден в списке доступных!")
+        
         return
-    
-    try:
-        new_id = int(parts[1])
-    except ValueError:
-        await event.respond(f"❌ Неверный ID: {parts[1]}")
-        return
-    
-    account_data['current_farm_gift_id'] = new_id
-    
-    await load_available_gifts(client, phone, force=True)
-    if new_id in account_data.get('available_gifts', {}):
-        price = account_data['available_gifts'][new_id].stars
-        await event.respond(f"✅ ID подарка изменен на: {new_id} ({price}⭐)")
-    else:
-        await event.respond(f"⚠️ Подарок {new_id} не найден в списке доступных!")
-    
-    return
     
     # ========== КОМАНДА .farm_status (ДЛЯ ВСЕХ АККАУНТОВ) ==========
     if text.lower().startswith('.farm_status'):
